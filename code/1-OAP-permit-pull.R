@@ -13,7 +13,8 @@
 library(RJDBC) 
 library(dotenv)
 library(keyring)
-library(dplyr)
+library(here)
+
 
 # load .env
 load_dot_env(".env") # this is coming from the value pair in .env file (made separately and added to .gitignore)
@@ -21,16 +22,8 @@ load_dot_env(".env") # this is coming from the value pair in .env file (made sep
 # check keyring for UN
 keyring::key_list("HMS-BFT")$username
 # and pw
-keyring::key_get("HMS-BFT", "NMFS")
+keyring::key_get("HMS-BFT", "NMFS")  
 
-key_list("HMS-BFT", keyring = "dbconn_keyring")
-key_list("HMS-BFT", keyring = "dbconn_keyring")$username
-key_get("HMS-BFT", keyring = "dbconn_keyring")
-
-
-keyring::key_list("HMS-BFT") %>% 
-  dplyr::filter(service == "HMS-BFT") %>% 
-  .$username
 
 ##
 
@@ -66,21 +59,13 @@ jdbcDriver <- JDBC(driverClass = "oracle.jdbc.OracleDriver",
 
 # 
 # # Create a Connection to the Oracle Database 
-
 jdbConnection <- dbConnect(jdbcDriver, 
-                     Sys.getenv("HMS_OAP_PERMITS"), # this is loaded from the .env file using {dotenv} package
-                     user = keyring::key_list("HMS-BFT")$username, 
-                     #password = keyring::key_get("HMS-BFT", "NMFS")
-                     password = rstudioapi::askForPassword("Database Password"))
+                           Sys.getenv("HMS_OAP_PERMITS"), # this is loaded from the .env file using {dotenv} package
+                           user = keyring::key_list("HMS-BFT")$username, 
+                           password = keyring::key_get("HMS-BFT", "NMFS"))
 
 
-######################################
-## Run query
-######################################
-
-hmsproTables <- dbListTables(jdbConnection, schema = 'NMFS')
-
-#Here is how you access data from a DBLink: SCHEMA.TABLE@DBLINK_NAME
+## Run Query
 
 # for addresses/locations
 states_sql <- "select 
@@ -105,7 +90,10 @@ states_sql <- "select
 sql_results <- dbGetQuery(jdbConnection, states_sql)
 
 
-# check for open connections
+# save data to data folder 
+saveRDS(sql_results, here("data", paste0("OAP-vessels-owners_", Sys.Date(), ".rds")))
+
+# check for open connections and close any 
 var <- as.list(.GlobalEnv)
 var_names <- names(var)
 
@@ -116,4 +104,4 @@ for (i in seq_along(var_names)){
 }
 
 # remove objects
-rm(jdbcDriver, jdbConnection, var, i, var_names, hmsproTables)
+rm(jdbcDriver, jdbConnection, var, i, var_names, states_sql)

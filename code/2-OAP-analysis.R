@@ -38,6 +38,9 @@ library(rvest)
 # permits for HMS anglers
 oap <- readRDS(here::here("data", "OAP-vessels-owners_2022-08-15.rds"))
 
+# get OG names 
+oap_names <- names(oap)
+
 # convert to all caps
 oap <- oap %>% 
   mutate(across(everything(), toupper))
@@ -82,16 +85,83 @@ stReg_substr <- data.frame(sort(table(oap$st_reg_t))) # messy
 # many DO-CG # in this field 
 
 
+# all the owner shipping/billing the same? 
+# if both NA, return NA 
+# if the same or one NA, return same value or non-NA
+# if different, return both 
+oap$OwnerAddyRect <- ifelse(is.na(oap$OWNER_BILLINGSTATE) & is.na(oap$OWNER_SHIPPINGSTATE), NA, 
+                            ifelse(!is.na(oap$OWNER_BILLINGSTATE) & is.na(oap$OWNER_SHIPPINGSTATE), oap$OWNER_BILLINGSTATE, 
+                                   ifelse(is.na(oap$OWNER_BILLINGSTATE) & !is.na(oap$OWNER_SHIPPINGSTATE), oap$OWNER_SHIPPINGSTATE, 
+                                          ifelse(!is.na(oap$OWNER_BILLINGSTATE) & !is.na(oap$OWNER_SHIPPINGSTATE) & 
+                                                   oap$OWNER_BILLINGSTATE == oap$OWNER_SHIPPINGSTATE, oap$OWNER_BILLINGSTATE, 
+                                                 ifelse(!is.na(oap$OWNER_BILLINGSTATE) & !is.na(oap$OWNER_SHIPPINGSTATE) & 
+                                                          oap$OWNER_BILLINGSTATE != oap$OWNER_SHIPPINGSTATE, 
+                                                        paste0(oap$OWNER_BILLINGSTATE, ", ", oap$OWNER_SHIPPINGSTATE), 
+                                                              NA)))))
+
+
+
+length(unique(oap$OwnerAddyRect)) # 76! 
+table(is.na(oap$OwnerAddyRect)) # all NA for both 
+unique(oap$OwnerAddyRect)
+
+## looking at combos of vessel home state and principal state 
+sum(is.na(oap$VESSEL_HOMESTATE) & is.na(oap$VESSEL_PRINCIPALSTATE)) # only 2 
+table(is.na(oap$VESSEL_HOMESTATE), is.na(oap$VESSEL_PRINCIPALSTATE)) # mostly not NA
+table(oap$VESSEL_HOMESTATE == oap$VESSEL_PRINCIPALSTATE) # 11.2k F
+
+oap$VesselStateRect <- ifelse(is.na(oap$VESSEL_HOMESTATE) & is.na(oap$VESSEL_PRINCIPALSTATE), NA, 
+                              ifelse(!is.na(oap$VESSEL_HOMESTATE) & is.na(oap$VESSEL_PRINCIPALSTATE), oap$VESSEL_HOMESTATE, 
+                                     ifelse(is.na(oap$VESSEL_HOMESTATE) & !is.na(oap$VESSEL_PRINCIPALSTATE), oap$VESSEL_PRINCIPALSTATE, 
+                                            ifelse(!is.na(oap$VESSEL_HOMESTATE) & !is.na(oap$VESSEL_PRINCIPALSTATE) & 
+                                                     oap$VESSEL_HOMESTATE == oap$VESSEL_PRINCIPALSTATE, oap$VESSEL_HOMESTATE, 
+                                                   ifelse(!is.na(oap$VESSEL_HOMESTATE) & !is.na(oap$VESSEL_PRINCIPALSTATE) & 
+                                                            oap$VESSEL_HOMESTATE != oap$VESSEL_PRINCIPALSTATE, 
+                                                          paste0(oap$VESSEL_HOMESTATE, ", ", oap$VESSEL_PRINCIPALSTATE), 
+                                                          NA)))))
+
+length(unique(oap$VesselStateRect)) # 791
+table(is.na(oap$VesselStateRect)) # only 2, good 
+unique(oap$VesselStateRect)
+
+
+## combining them
+oap$states_conc <- paste0(oap$VesselStateRect, "; ", oap$OwnerAddyRect)
+
+## Now, count the combos with each substr of the state reg
+oap_f <- oap %>% 
+  group_by(st_reg_t, states_conc) %>% # group for counts 
+  summarize(count = n()) %>% # get counts 
+  ungroup() %>% # ungroup to split strings
+  mutate(VesselStateRect = str_split_fixed(states_conc, pattern = "; ", n = 2)[,1], # split strings
+         OwnerAddyRect = str_split_fixed(states_conc, pattern = "; ", n = 2)[,2]) %>% 
+  filter(!is.na(st_reg_t)) # filter NA for the st_reg_t
+
+# reorder, rename 
+oap_f <- oap_f %>% 
+  select(st_reg_t, VesselStateRect, OwnerAddyRect, count) 
+  
+names(oap_f) <- c("StateFromRegistration", "Vessel_HomeState_PrincipalState", "Owner_BillState_ShipState", "count")
+
+
+
+# write file 
+write_xlsx(oap_f, here("output", paste0("PermitShop_StateInfo_", Sys.Date(), ".xlsx")))
 
 
 ## Looking for countries outside the US
 country <- oap %>% 
   filter(!toupper(OWNER_BILLINGSTATE) %in% st_abr$Abr & 
            !is.na(OWNER_BILLINGSTATE) & 
-           OWNER_BILLINGSTATE != "FI") # drop FL typos
+           OWNER_BILLINGSTATE != "FI" & 
+           OWNER_BILLINGSTATE != "VI" & 
+           !OwnerAddyRect %in% st_abr$Abr) %>% # drop FL typos and VI
+  select(all_of(oap_names))
 
 unique(country$OWNER_BILLINGSTATE)
 
+# Write file 
+write_xlsx(country, here("output", paste0("PermitShop_CountryInfo_", Sys.Date(), ".xlsx")))
 
 # Canada, Bermuda, BVI, 
 
